@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>스마트 지팡이 관제</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1d2129; --muted: #667085; --line: #e3e6ea;
+    --ok: #14804a; --ok-bg: #e6f6ed; --warn: #b54708; --warn-bg: #fff4e5;
+    --danger: #c41d1d; --danger-bg: #fdecec; --off: #475467; --off-bg: #eef0f3; --accent: #2457d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --card: #1b1f25; --text: #e7e9ec; --muted: #98a2b3; --line: #2c323a;
+      --ok: #4cc38a; --ok-bg: #12291e; --warn: #f5a524; --warn-bg: #2d2210;
+      --danger: #ff6b6b; --danger-bg: #351616; --off: #98a2b3; --off-bg: #23282f; --accent: #7aa2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text);
+           border-radius: 10px; padding: 10px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.big { width: 100%; padding: 14px; font-size: 18px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .banner { border-radius: 14px; padding: 16px; margin-bottom: 12px; border: 2px solid transparent; }
+  .banner h2 { margin: 0 0 4px; font-size: 24px; }
+  .banner p { margin: 0; }
+  .banner.ok { background: var(--ok-bg); color: var(--ok); }
+  .banner.warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+  .banner.danger { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); animation: pulse 1s infinite; }
+  .banner.off { background: var(--off-bg); color: var(--off); }
+  @keyframes pulse { 50% { border-color: transparent; } }
+  @media (prefers-reduced-motion: reduce) { .banner.danger { animation: none; } }
+  .acked { margin-top: 8px; font-weight: 600; }
+  .notice { border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; background: var(--warn-bg); color: var(--warn); }
+  #map { height: 55vh; min-height: 320px; border-radius: 14px; border: 1px solid var(--line); margin-bottom: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .label { color: var(--muted); font-size: 13px; }
+  .value { font-size: 17px; font-weight: 600; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .row > * { flex: 1 1 140px; }
+  .btn { display: block; text-align: center; text-decoration: none; color: var(--text);
+         border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 10px 14px; }
+  ul.events { list-style: none; margin: 0; padding: 0; }
+  ul.events li { padding: 8px 0; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; }
+  ul.events li:last-child { border-bottom: 0; }
+  ul.events a { white-space: nowrap; color: var(--accent); }
+  .muted { color: var(--muted); font-size: 13px; }
+  #login { max-width: 360px; margin: 12vh auto 0; }
+  #login input { width: 100%; font: inherit; padding: 12px; margin: 6px 0; border-radius: 10px;
+                 border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  .err { color: var(--danger); min-height: 1.5em; }
+  .dot { width: 22px; height: 22px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
+  .dot.ok { background: #14804a; } .dot.warn { background: #f59e0b; } .dot.danger { background: #dc2626; }
+  .dot.off { background: #667085; } .dot.old { background: #98a2b3; opacity: .8; }
+  details summary { cursor: pointer; color: var(--muted); }
+  dl.diag { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 10px 0 0; }
+  dl.diag dt { color: var(--muted); }
+  dl.diag dd { margin: 0; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 로그인 -->
+  <form id="login" class="card" hidden>
+    <h1>🦯 스마트 지팡이 관제</h1>
+    <p class="muted">보호자 계정으로 로그인하세요.</p>
+    <input id="email" type="email" placeholder="이메일" autocomplete="username" required>
+    <input id="password" type="password" placeholder="비밀번호" autocomplete="current-password" required>
+    <div class="err" id="loginErr"></div>
+    <button class="primary big" type="submit">로그인</button>
+  </form>
+
+  <!-- 관제 화면 -->
+  <main id="app" hidden>
+    <header>
+      <h1>🦯 스마트 지팡이 관제</h1>
+      <button id="logout">로그아웃</button>
+    </header>
+
+    <section id="banner" class="banner off" aria-live="assertive">
+      <h2 id="bTitle">연결 중…</h2>
+      <p id="bDesc">지팡이 데이터를 기다리는 중입니다.</p>
+      <p id="bAcked" class="acked" hidden></p>
+    </section>
+
+    <div id="faultNotice" class="notice" hidden></div>
+
+    <div class="row" id="alarmActions" hidden>
+      <button id="ackBtn" class="primary big">✔ 확인했어요 (지팡이에 진동으로 알림)</button>
+      <button id="muteBtn" class="big">🔇 이 화면 경보음 끄기</button>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="row">
+      <a class="btn" id="kakaoLink" target="_blank" rel="noopener">카카오맵 길찾기</a>
+      <a class="btn" id="googleLink" target="_blank" rel="noopener">구글 지도</a>
+      <label class="btn"><input type="checkbox" id="follow" checked> 위치 따라가기</label>
+    </div>
+
+    <div class="grid">
+      <div class="card"><div class="label">마지막 수신</div><div class="value" id="iUpdated">–</div></div>
+      <div class="card"><div class="label">GPS</div><div class="value" id="iGps">–</div></div>
+      <div class="card"><div class="label">배터리</div><div class="value" id="iBatt">–</div></div>
+      <div class="card"><div class="label">지팡이 상태</div><div class="value" id="iCane">–</div></div>
+    </div>
+
+    <section class="card" style="margin-bottom:12px">
+      <div class="label" style="margin-bottom:6px">최근 기록</div>
+      <ul class="events" id="events"><li class="muted">기록 없음</li></ul>
+    </section>
+
+    <details class="card" style="margin-bottom:12px">
+      <summary>장치 진단</summary>
+      <dl class="diag">
+        <dt>펌웨어</dt><dd id="dFw">–</dd>
+        <dt>켜진 시간</dt><dd id="dUptime">–</dd>
+        <dt>최근 재시작 원인</dt><dd id="dBoot">–</dd>
+        <dt>Wi-Fi 신호</dt><dd id="dRssi">–</dd>
+        <dt>여유 메모리</dt><dd id="dHeap">–</dd>
+      </dl>
+    </details>
+
+    <details class="card">
+      <summary>테스트 도구 (지팡이 없이 화면 확인)</summary>
+      <p class="muted">지도 중심 좌표로 가짜 상태를 씁니다. 실제 지팡이가 켜져 있으면 다음 전송 때 덮어써집니다.</p>
+      <div class="row">
+        <button data-demo="OK">정상</button>
+        <button data-demo="FALL_PENDING">낙상 의심</button>
+        <button data-demo="FALL">낙상</button>
+        <button data-demo="SOS">SOS</button>
+      </div>
+    </details>
+
+    <p class="muted">※ 이 화면은 열려 있을 때만 소리·알림이 울립니다. 화면을 닫아도 알림을 받으려면 텔레그램 알림을 설정하세요.</p>
+  </main>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getDatabase, ref, onValue, set, serverTimestamp, query, limitToLast }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+// ====== 설정: Firebase 콘솔 > 프로젝트 설정 > 내 앱(웹) 에서 복사 ======
+const firebaseConfig = {
+  apiKey: "AIzaSyBFae7ybf2KdSjAGr7AiCvAr5UGjhqL1Ig",
+  authDomain: "smart-cane-b9480.firebaseapp.com",
+  databaseURL: "https://smart-cane-b9480-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "smart-cane-b9480",
+  storageBucket: "smart-cane-b9480.firebasestorage.app",
+  messagingSenderId: "114900517031",
+  appId: "1:114900517031:web:66e9187ad6c0b816269b82",
+};
+const CANE_ID = "cane01";
+const OFFLINE_SEC = 90;   // 이 시간 넘게 갱신이 없으면 '연결 끊김'
+// =====================================================================
+
+const auth = getAuth(initializeApp(firebaseConfig));
+const db = getDatabase();
+const $ = (id) => document.getElementById(id);
+
+const MODES = {
+  OK:           { cls: "ok",     title: "정상",        desc: "지팡이가 정상 작동 중입니다." },
+  FALL_PENDING: { cls: "warn",   title: "낙상 의심",   desc: "지팡이가 넘어졌습니다. 사용자가 15초 안에 버튼을 누르거나 지팡이를 세우면 자동 취소됩니다." },
+  FALL:         { cls: "danger", title: "⚠️ 낙상 감지", desc: "사용자 응답이 없습니다. 즉시 연락하거나 현장으로 이동하세요." },
+  SOS:          { cls: "danger", title: "🚨 SOS 요청",  desc: "사용자가 도움을 요청했습니다." },
+};
+const ALARM = ["FALL", "SOS"];
+const FAULTS = { IMU: "자이로(낙상 감지)", GPS: "GPS", SONAR_UP: "상단 초음파", SONAR_LO: "하단 초음파" };
+const BOOT = {
+  POWERON: "전원 켬", SW: "프로그램 재시작", EXT: "리셋 버튼",
+  BROWNOUT: "⚠️ 전압 부족 — 배터리·배선 점검 필요", PANIC: "⚠️ 프로그램 오류",
+  TASK_WDT: "⚠️ 멈춤 감지(워치독)", INT_WDT: "⚠️ 멈춤 감지(워치독)", WDT: "⚠️ 멈춤 감지(워치독)",
+  DEEPSLEEP: "절전 해제", OTHER: "기타",
+};
+
+let state = null, lastFix = null, ack = null, serverOffset = 0;
+let prevMode = null, wasOffline = false, mutedAlarmId = null;
+let map, marker, accCircle, trail, trailPts = [], centered = false, audioCtx = null;
+
+// ---------- 로그인 ----------
+$("login").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("loginErr").textContent = "";
+  unlockAudio();
+  if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+  try {
+    await signInWithEmailAndPassword(auth, $("email").value.trim(), $("password").value);
+  } catch (err) {
+    $("loginErr").textContent = "로그인 실패: " + (err.code || err.message);
+  }
+});
+$("logout").onclick = () => signOut(auth).then(() => location.reload());
+
+let started = false;
+onAuthStateChanged(auth, (user) => {
+  $("login").hidden = !!user;
+  $("app").hidden = !user;
+  if (user && !started) { started = true; start(); }
+});
+
+// ---------- 지도 · 구독 ----------
+function start() {
+  map = L.map("map").setView([37.5665, 126.9780], 13);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19, attribution: "&copy; OpenStreetMap contributors",
+  }).addTo(map);
+  trail = L.polyline([], { color: "#2457d6", weight: 4, opacity: 0.6 }).addTo(map);
+  setTimeout(() => map.invalidateSize(), 50);
+
+  const base = `canes/${CANE_ID}`;
+  onValue(ref(db, ".info/serverTimeOffset"), (s) => { serverOffset = s.val() || 0; });
+  onValue(ref(db, `${base}/state`), (s) => { state = s.val(); onState(); }, showDbError);
+  onValue(ref(db, `${base}/lastFix`), (s) => { lastFix = s.val(); render(); }, showDbError);
+  onValue(ref(db, `${base}/ack`), (s) => { ack = s.val(); render(); }, showDbError);
+  onValue(query(ref(db, `${base}/events`), limitToLast(20)), (s) => renderEvents(s.val()), showDbError);
+  setInterval(render, 1000);
+  document.addEventListener("click", unlockAudio, { once: true });
+  setInterval(alarmTick, 1200);
+}
+
+function showDbError(err) {
+  $("banner").className = "banner off";
+  $("bTitle").textContent = "데이터 읽기 권한 없음";
+  $("bDesc").textContent = "Firebase 데이터의 members/" + CANE_ID + " 에 이 계정 UID가 있는지 확인하세요. (" + err.code + ")";
+}
+
+function onState() {
+  if (state && state.mode !== prevMode) {
+    if (prevMode !== null && ALARM.includes(state.mode)) notify(MODES[state.mode].title, MODES[state.mode].desc);
+    prevMode = state.mode;
+  }
+  if (state && typeof state.lat === "number") {
+    const p = [state.lat, state.lng];
+    const last = trailPts[trailPts.length - 1];
+    if (state.fix && (!last || map.distance(last, p) > 3)) {
+      trailPts.push(p);
+      if (trailPts.length > 300) trailPts.shift();
+      trail.setLatLngs(trailPts);
+    }
+  }
+  render();
+}
+
+// ---------- 화면 그리기 ----------
+function ago(sec) {
+  sec = Math.max(0, sec);
+  if (sec < 60) return `${Math.round(sec)}초`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}분`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}시간 ${Math.floor((sec % 3600) / 60)}분`;
+  return `${Math.floor(sec / 86400)}일`;
+}
+const now = () => Date.now() + serverOffset;
+const timeText = (ms) => new Date(ms).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+function isAcked() {
+  return state && ack && ack.alarmId === state.alarmId && state.mode !== "OK";
+}
+
+// 지도에 표시할 위치: 이번 부팅 후 위치 → 없으면 '마지막 확인 위치'
+function position() {
+  if (state && typeof state.lat === "number")
+    return { lat: state.lat, lng: state.lng, live: !!state.fix, ageSec: state.fixAgeSec || 0, hdop: state.hdop };
+  if (lastFix && typeof lastFix.lat === "number")
+    return { lat: lastFix.lat, lng: lastFix.lng, live: false, ageSec: (now() - lastFix.at) / 1000, hdop: lastFix.hdop, stored: true };
+  return null;
+}
+
+function render() {
+  if (!state) {
+    $("banner").className = "banner off";
+    $("bTitle").textContent = "아직 데이터 없음";
+    $("bDesc").textContent = "지팡이 전원과 스마트폰 핫스팟이 켜져 있는지 확인하세요.";
+    return;
+  }
+  const age = state.updatedAt ? (now() - state.updatedAt) / 1000 : Infinity;
+  const offline = age > OFFLINE_SEC;
+  if (offline && !wasOffline && isFinite(age)) notify("지팡이 연결 끊김", "배터리 방전이나 핫스팟 꺼짐일 수 있습니다.");
+  wasOffline = offline;
+  const m = MODES[state.mode] || MODES.OK;
+
+  let cls = m.cls, title = m.title, desc = m.desc;
+  if (offline) {
+    if (state.mode === "OK") { cls = "off"; title = "연결 끊김"; }
+    desc = `${ago(age)}째 지팡이 소식이 없습니다 (배터리 방전·핫스팟 꺼짐 가능). 아래는 마지막 상태입니다. ` + (state.mode === "OK" ? "" : desc);
+  }
+  $("banner").className = "banner " + cls;
+  $("bTitle").textContent = title;
+  $("bDesc").textContent = desc;
+
+  const acked = isAcked();
+  $("bAcked").hidden = !acked;
+  if (acked) $("bAcked").textContent = `✔ ${ack.by || "보호자"} 님이 확인함 — 지팡이에 진동으로 전달됩니다.`;
+  $("alarmActions").hidden = state.mode === "OK" || acked;
+  $("muteBtn").hidden = !ALARM.includes(state.mode);
+  document.title = (ALARM.includes(state.mode) && !acked ? "🚨 " : "") + "스마트 지팡이 관제";
+
+  const faults = (state.faults || []).map((f) => FAULTS[f] || f);
+  $("faultNotice").hidden = !faults.length;
+  if (faults.length) $("faultNotice").textContent = `🔧 센서 점검 필요: ${faults.join(", ")} — 배선을 확인하세요.`;
+
+  // 지도
+  const pos = position();
+  if (pos) {
+    const p = [pos.lat, pos.lng];
+    const dotCls = pos.stored ? "old" : cls;
+    const icon = L.divIcon({ className: "", html: `<div class="dot ${dotCls}"></div>`, iconSize: [22, 22], iconAnchor: [11, 11] });
+    if (!marker) marker = L.marker(p, { icon }).addTo(map);
+    else marker.setLatLng(p).setIcon(icon);
+    const radius = pos.live ? Math.max(5, (pos.hdop || 1) * 5) : 0;
+    if (!accCircle) accCircle = L.circle(p, { radius, weight: 1, fillOpacity: 0.12 }).addTo(map);
+    else accCircle.setLatLng(p).setRadius(radius);
+    if (!centered) { map.setView(p, 17); centered = true; }
+    else if ($("follow").checked && !map.getBounds().pad(-0.2).contains(p)) map.panTo(p);
+    $("kakaoLink").href = `https://map.kakao.com/link/to/지팡이 위치,${pos.lat},${pos.lng}`;
+    $("googleLink").href = `https://www.google.com/maps/search/?api=1&query=${pos.lat},${pos.lng}`;
+  }
+
+  // 정보 카드
+  $("iUpdated").textContent = isFinite(age) ? `${ago(age)} 전 (${new Date(state.updatedAt).toLocaleTimeString("ko-KR")})` : "–";
+  if (pos && pos.live) $("iGps").textContent = `실시간 · 위성 ${state.sats}개 · 오차 약 ${Math.round(Math.max(5, state.hdop * 5))}m`;
+  else if (pos && pos.stored) $("iGps").textContent = `수신 대기 · 마지막 확인 위치 ${timeText(lastFix.at)}`;
+  else if (pos) $("iGps").textContent = `수신 불가(실내?) · ${ago(pos.ageSec)} 전 위치`;
+  else $("iGps").textContent = "GPS 수신 대기 중";
+  $("iBatt").textContent = typeof state.battery === "number"
+    ? `${state.battery}%${state.batteryV ? ` (${state.batteryV}V)` : ""}${state.battery < 15 ? " ⚠️ 충전 필요" : ""}` : "측정 안 함 (보조배터리)";
+  const cane = [];
+  cane.push(state.lying ? "바닥에 누워 있음" : "세워져 있음");
+  if (state.obstacleMuted) cane.push("장애물 진동 일시정지");
+  cane.push(state.night ? "안전등 켜짐" : "안전등 꺼짐");
+  $("iCane").textContent = cane.join(" · ");
+
+  // 진단
+  $("dFw").textContent = state.fw ? `v${state.fw}` : "–";
+  $("dUptime").textContent = typeof state.uptimeSec === "number" ? ago(state.uptimeSec) : "–";
+  $("dBoot").textContent = state.boot ? (BOOT[state.boot] || state.boot) : "–";
+  $("dRssi").textContent = typeof state.rssi === "number" ? `${state.rssi} dBm ${state.rssi > -67 ? "(좋음)" : state.rssi > -80 ? "(보통)" : "(약함)"}` : "–";
+  $("dHeap").textContent = typeof state.heap === "number" ? `${Math.round(state.heap / 1024)} KB` : "–";
+}
+
+const EVENT_LABEL = { SOS: "🚨 SOS", FALL: "⚠️ 낙상", CLEAR: "✅ 해제", LOW_BATTERY: "🔋 배터리 부족" };
+const NOTE_LABEL = { RESTORED: "재시작 후 계속", POWER_CYCLE: "전원을 껐다 켬" };
+function renderEvents(val) {
+  const ul = $("events");
+  ul.replaceChildren();
+  const list = val ? Object.values(val).reverse() : [];
+  if (!list.length) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "기록 없음";
+    ul.append(li);
+    return;
+  }
+  for (const ev of list) {
+    const li = document.createElement("li");
+    const left = document.createElement("span");
+    const extra = [];
+    if (ev.type === "LOW_BATTERY" && typeof ev.battery === "number") extra.push(`${ev.battery}%`);
+    if (ev.note) extra.push(NOTE_LABEL[ev.note] || ev.note);
+    if (ev.delaySec >= 30) extra.push(`${ago(ev.delaySec)} 늦게 전송됨`);
+    left.textContent = `${EVENT_LABEL[ev.type] || ev.type}  ${ev.at ? timeText(ev.at) : ""}${extra.length ? ` (${extra.join(", ")})` : ""}`;
+    li.append(left);
+    if (typeof ev.lat === "number") {
+      const a = document.createElement("a");
+      a.href = "#";
+      a.textContent = "위치 보기";
+      a.onclick = (e) => { e.preventDefault(); $("follow").checked = false; map.setView([ev.lat, ev.lng], 18); };
+      li.append(a);
+    }
+    ul.append(li);
+  }
+}
+
+// ---------- 확인(ACK) ----------
+$("ackBtn").onclick = async () => {
+  if (!state) return;
+  $("ackBtn").disabled = true;
+  try {
+    await set(ref(db, `canes/${CANE_ID}/ack`), { alarmId: state.alarmId, by: auth.currentUser.email, at: serverTimestamp() });
+    mutedAlarmId = state.alarmId;
+  } catch (err) {
+    alert("확인 전송 실패: " + (err.code || err.message));
+  } finally {
+    $("ackBtn").disabled = false;
+  }
+};
+$("muteBtn").onclick = () => { if (state) mutedAlarmId = state.alarmId; };
+
+// ---------- 경보음 · 알림 ----------
+function unlockAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+}
+
+function beep(freq, dur) {
+  if (!audioCtx) return;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.frequency.value = freq;
+  g.gain.value = 0.2;
+  o.connect(g).connect(audioCtx.destination);
+  o.start();
+  o.stop(audioCtx.currentTime + dur);
+}
+
+function alarmTick() {
+  if (!state || !ALARM.includes(state.mode) || isAcked() || mutedAlarmId === state.alarmId) return;
+  beep(1800, 0.25);
+  setTimeout(() => beep(2400, 0.25), 300);
+}
+
+function notify(title, body) {
+  // 브라우저는 사용자가 화면을 한 번 이상 누른 뒤에만 진동을 허용함
+  const activated = !navigator.userActivation || navigator.userActivation.hasBeenActive;
+  if (navigator.vibrate && activated) navigator.vibrate([400, 200, 400, 200, 400]);
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification(title, { body, requireInteraction: true });
+  }
+}
+
+// ---------- 테스트 도구 ----------
+document.querySelectorAll("[data-demo]").forEach((btn) => {
+  btn.onclick = () => {
+    const c = map.getCenter();
+    set(ref(db, `canes/${CANE_ID}/state`), {
+      mode: btn.dataset.demo, alarmId: Math.floor(Math.random() * 2 ** 31) + 1,
+      lat: +c.lat.toFixed(6), lng: +c.lng.toFixed(6), fix: true, fixAgeSec: 0,
+      sats: 8, hdop: 1.2, battery: 77, batteryV: 3.92, night: false, lying: btn.dataset.demo.startsWith("FALL"),
+      obstacleMuted: false, rssi: -58, fw: "demo", boot: "POWERON", uptimeSec: 600, heap: 180000,
+      updatedAt: serverTimestamp(),
+    });
+  };
+});
+</script>
+</body>
+</html>
