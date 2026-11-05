@@ -188,7 +188,7 @@ const BOOT = {
 };
 
 let state = null, lastFix = null, ack = null, serverOffset = 0;
-let prevMode = null, wasOffline = false, mutedAlarmId = null;
+let prevMode = null, wasOffline = false, mutedAlarmId = null, lastEvent = null;
 let map, marker, accCircle, trail, trailPts = [], centered = false, audioCtx = null;
 
 // ---------- 로그인 ----------
@@ -241,6 +241,7 @@ function showDbError(err) {
 function onState() {
   if (state && state.mode !== prevMode) {
     if (prevMode !== null && ALARM.includes(state.mode)) notify(MODES[state.mode].title, MODES[state.mode].desc);
+    if (ALARM.includes(prevMode) && state.mode === "OK") notify("✅ 경보 해제", "사용자가 지팡이에서 경보를 해제했습니다.");
     prevMode = state.mode;
   }
   if (state && typeof state.lat === "number") {
@@ -296,6 +297,17 @@ function render() {
   if (offline) {
     if (state.mode === "OK") { cls = "off"; title = "연결 끊김"; }
     desc = `${ago(age)}째 지팡이 소식이 없습니다 (배터리 방전·핫스팟 꺼짐 가능). 아래는 마지막 상태입니다. ` + (state.mode === "OK" ? "" : desc);
+  }
+  // 방금(10분 안) 해제됐으면 '정상' 대신 해제됐다는 걸 분명히 보여 줌
+  const ev = lastEvent;
+  if (!offline && state.mode === "OK" && ev && ev.type === "CLEAR" && ev.at && now() - ev.at < 10 * 60 * 1000) {
+    if (ev.prev === "FALL_PENDING") {
+      title = "✅ 낙상 의심 취소됨";
+      desc = `사용자가 ${timeText(ev.at)}에 '괜찮아요' 버튼을 누르거나 지팡이를 다시 세웠습니다. 지금은 정상입니다.`;
+    } else {
+      title = "✅ 경보 해제됨";
+      desc = `사용자가 ${timeText(ev.at)}에 지팡이에서 ${ev.prev === "FALL" ? "낙상 경보" : "SOS"}를 해제했습니다. 지금은 정상 작동 중입니다.`;
+    }
   }
   $("banner").className = "banner " + cls;
   $("bTitle").textContent = title;
@@ -353,10 +365,13 @@ function render() {
 
 const EVENT_LABEL = { SOS: "🚨 SOS", FALL: "⚠️ 낙상", CLEAR: "✅ 해제", LOW_BATTERY: "🔋 배터리 부족" };
 const NOTE_LABEL = { RESTORED: "재시작 후 계속", POWER_CYCLE: "전원을 껐다 켬" };
+const PREV_LABEL = { SOS: "SOS 해제", FALL: "낙상 경보 해제", FALL_PENDING: "낙상 의심 취소" };
 function renderEvents(val) {
   const ul = $("events");
   ul.replaceChildren();
   const list = val ? Object.values(val).reverse() : [];
+  lastEvent = list[0] || null;
+  render();
   if (!list.length) {
     const li = document.createElement("li");
     li.className = "muted";
@@ -369,6 +384,7 @@ function renderEvents(val) {
     const left = document.createElement("span");
     const extra = [];
     if (ev.type === "LOW_BATTERY" && typeof ev.battery === "number") extra.push(`${ev.battery}%`);
+    if (ev.type === "CLEAR" && ev.prev) extra.push(PREV_LABEL[ev.prev] || ev.prev);
     if (ev.note) extra.push(NOTE_LABEL[ev.note] || ev.note);
     if (ev.delaySec >= 30) extra.push(`${ago(ev.delaySec)} 늦게 전송됨`);
     left.textContent = `${EVENT_LABEL[ev.type] || ev.type}  ${ev.at ? timeText(ev.at) : ""}${extra.length ? ` (${extra.join(", ")})` : ""}`;
